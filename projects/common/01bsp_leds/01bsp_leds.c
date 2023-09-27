@@ -16,7 +16,18 @@ Load this program on your boards. The LEDs should start blinking furiously.
 #include "board.h"
 #include "leds.h"
 
-void some_delay(void);
+#include "sctimer.h"
+#define SCTIMER_PERIOD     1638 // @32kHz = 1s. So 1638 should be near 50ms
+
+typedef struct {
+   uint16_t num_compare;
+} app_vars_t;
+
+app_vars_t app_vars;
+void cb_compare(void);
+
+
+void delay_50ms(void);
 
 /**
 \brief The program starts executing here.
@@ -25,53 +36,40 @@ int mote_main(void) {uint8_t i;
    
    board_init();
    
-   // error LED functions
-   leds_error_on();          some_delay();
-   leds_error_off();         some_delay();
-   leds_error_toggle();      some_delay();
-   leds_error_blink();       some_delay();
+   sctimer_set_callback(cb_compare);
+   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD);
+
+   // LED 1 (error LED)
+   leds_error_on();          delay_50ms();
+   leds_error_off();
    
-   // radio LED functions
-   leds_radio_on();          some_delay();
-   leds_radio_off();         some_delay();
-   leds_radio_toggle();      some_delay();
+   // LED 2 (radio LED)
+   leds_radio_on();          delay_50ms();
+   leds_radio_off();
+      
+   // LED 4 (debug LED)
+   leds_debug_on();          delay_50ms();
+   leds_debug_off();
    
-   // sync LED functions
-   leds_sync_on();           some_delay();
-   leds_sync_off();          some_delay();
-   leds_sync_toggle();       some_delay();
-   
-   // debug LED functions
-   leds_debug_on();          some_delay();
-   leds_debug_off();         some_delay();
-   leds_debug_toggle();      some_delay();
-   
-   // all LED functions
-   leds_all_off();           some_delay();
-   leds_all_on();            some_delay();
-   leds_all_off();           some_delay();
-   leds_all_toggle();        some_delay();
-   
-   // LED increment function
-   leds_all_off();           some_delay();
-   for (i=0;i<9;i++) {
-      leds_increment();      some_delay();
-   }
-   
-   // LED circular shift function
-   leds_all_off();           some_delay();
-   leds_error_on();          some_delay();
-   for (i=0;i<9;i++) {
-      leds_circular_shift(); some_delay();
-   }
-   
+   // LED 3 (sync LED)
+   leds_sync_on();           delay_50ms();
+   leds_sync_off();
+
    // reset the board, so the program starts running again
    board_reset();
    
    return 0;
 }
 
-void some_delay(void) {
-   volatile uint16_t delay;
-   for (delay=0xffff;delay>0;delay--);
+void delay_50ms(void) {
+  board_sleep();
+}
+
+void cb_compare(void) {
+   
+   // increment counter
+   app_vars.num_compare++;
+   
+   // schedule again
+   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD);
 }

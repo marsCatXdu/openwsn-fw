@@ -37,6 +37,9 @@ void cb_compare(void);
 
 //=========================== main ============================================
 
+
+uint16_t sleep_counter = 0;
+
 /**
 \brief The program starts executing here.
 */
@@ -46,26 +49,32 @@ int mote_main(void) {
    board_init();
    
    sctimer_set_callback(cb_compare);
-   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD);
+   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD/2);
+
+   while(1) {
+      // LED 1 (error LED)
+     leds_error_toggle();     board_sleep();
+     sleep_counter = sleep_counter + 1;
    
-   while (1) {
-      board_sleep();
+     // LED 2 (radio LED)
+     if(sleep_counter%2==0) leds_radio_toggle();
+     
+     // LED 3 (sync LED)
+     if(sleep_counter%3==0) leds_sync_toggle();
+
+     // LED 4 (debug LED)
+     if(sleep_counter%4==0) leds_debug_toggle();
+
    }
+
 }
 
 //=========================== callbacks =======================================
 
 void cb_compare(void) {
-   
-   // toggle pin
-   debugpins_frame_toggle();
-   
-   // toggle error led
-   leds_error_toggle();
-   
    // increment counter
    app_vars.num_compare++;
    
    // schedule again
-   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD);
+   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD/2);
 }

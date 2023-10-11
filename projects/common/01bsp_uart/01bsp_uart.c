@@ -23,24 +23,23 @@ TeraTerm):
 #include "sctimer.h"
 #include "leds.h"
 
-//=========================== defines =========================================
-
-#define SCTIMER_PERIOD     0xffff // 0xffff@32kHz = 2s
-uint8_t stringToSend[]       = "Hello, World!\r\n";
-
 //=========================== variables =======================================
 
 typedef struct {
-              uint8_t uart_lastTxByteIndex;
-   volatile   uint8_t uartDone;
-   volatile   uint8_t uartSendNow;
+   uint8_t uart_lastTxByteIndex;
+
+   volatile uint8_t strReceived[32];               // string received from uart
+   volatile uint8_t receivedStrLen;                // string lenght
+
+   uint8_t doEcho;                                 // flag when ok to start echoing
+   uint8_t echoDone;                               // flag when echo is done
+
 } app_vars_t;
 
 app_vars_t app_vars;
 
 //=========================== prototypes ======================================
 
-void cb_compare(void);
 void cb_uartTxDone(void);
 uint8_t cb_uartRxCb(void);
 
@@ -53,65 +52,59 @@ int mote_main(void) {
    
    // clear local variable
    memset(&app_vars,0,sizeof(app_vars_t));
-    
-   app_vars.uartSendNow = 1;
+
+   for(uint8_t i=0; i<32; i++) app_vars.strReceived[i] = 0;
+   app_vars.receivedStrLen = 0;
+
+   app_vars.doEcho = 0;
+   app_vars.echoDone = 0;
    
    // initialize the board
    board_init();
    
    // setup UART
-   uart_setCallbacks(cb_uartTxDone,cb_uartRxCb);
+   uart_setCallbacks(cb_uartTxDone, cb_uartRxCb);
    uart_enableInterrupts();
    
-   // setup sctimer
-   sctimer_set_callback(cb_compare);
-   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD);
-   
    while(1) {
-      
-      // wait for timer to elapse
-      while (app_vars.uartSendNow==0);
-      app_vars.uartSendNow = 0;
-      
-      // send string over UART
-      app_vars.uartDone              = 0;
-      app_vars.uart_lastTxByteIndex  = 0;
-      uart_writeByte(stringToSend[app_vars.uart_lastTxByteIndex]);
-      while(app_vars.uartDone==0);
+      while(app_vars.doEcho==0);    // loop and wait when don't need to echo
+      app_vars.doEcho = 0;
+      app_vars.echoDone = 0;
+      // echo bytes over serial
+      app_vars.uart_lastTxByteIndex = 0;
+      uart_writeByte(app_vars.strReceived[0]);
+
+      while(app_vars.echoDone==0);  // loop and wait when echo is not done yet
    }
 }
 
 //=========================== callbacks =======================================
 
-void cb_compare(void) {
-   
-   // have main "task" send over UART
-   app_vars.uartSendNow = 1;
-   
-   // schedule again
-   sctimer_setCompare(sctimer_readCounter()+SCTIMER_PERIOD);
-}
-
 void cb_uartTxDone(void) {
    app_vars.uart_lastTxByteIndex++;
-   if (app_vars.uart_lastTxByteIndex<sizeof(stringToSend)) {
-      uart_writeByte(stringToSend[app_vars.uart_lastTxByteIndex]);
+   if(app_vars.uart_lastTxByteIndex<app_vars.receivedStrLen) {
+      uart_writeByte(app_vars.strReceived[app_vars.uart_lastTxByteIndex]);
    } else {
-      app_vars.uartDone = 1;
+      if(app_vars.receivedStrLen!=0) { 
+         uart_writeByte('\n');
+         for(uint8_t i=0; i<32; i++) app_vars.strReceived[i] = 0;
+         app_vars.receivedStrLen = 0;
+         app_vars.echoDone = 1;
+      }
    }
 }
 
 uint8_t cb_uartRxCb(void) {
-   uint8_t byte;
-   
-   // toggle LED
-   leds_error_toggle();
-   
-   // read received byte
-   byte = uart_readByte();
-   
-   // echo that byte over serial
-   uart_writeByte(byte);
-   
+   // read received bytes
+   while(1) {
+      uint8_t byte = uart_readByte();
+      if(byte==0) break;
+      app_vars.strReceived[app_vars.receivedStrLen] = byte;
+      app_vars.receivedStrLen++;
+      if(byte=='\r') {
+         app_vars.doEcho = 1;
+         break;
+      }
+   }
    return 0;
 }

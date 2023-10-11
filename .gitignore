@@ -28,3 +28,6 @@ settings
 .DS_Store
 *.jlink
 *.emSession
+
+
+.vscode

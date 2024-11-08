@@ -95,16 +95,14 @@ void cb_uartTxDone(void) {
 }
 
 uint8_t cb_uartRxCb(void) {
-   // read received bytes
-   while(1) {
-      uint8_t byte = uart_readByte();
-      if(byte==0) break;
-      app_vars.strReceived[app_vars.receivedStrLen] = byte;
-      app_vars.receivedStrLen++;
-      if(byte=='\r') {
-         app_vars.doEcho = 1;
-         break;
-      }
-   }
-   return 0;
+    uint8_t byte = uart_readByte();
+    app_vars.strReceived[app_vars.receivedStrLen] = byte;
+    app_vars.receivedStrLen++;
+    if(byte=='\r') {
+        app_vars.doEcho = 1;
+        leds_debug_toggle();
+        for(int i=0; i<123456; i++) {}
+        leds_debug_toggle();
+    }
+    return 0;
 }

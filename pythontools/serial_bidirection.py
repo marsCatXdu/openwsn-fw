@@ -57,6 +57,7 @@ def main():
     
     while True:
         message = input("> ")
+        print("sending: \"", message, "\", length: ", len(message))
         message = message.encode("utf-8") + b"\r"
         try:
             SER.write(message)

@@ -27,7 +27,7 @@ end of frame event), it will turn on its error LED.
 
 #define LENGTH_PACKET   125+LENGTH_CRC  ///< maximum length is 127 bytes
 #define LEN_PKT_TO_SEND 20+LENGTH_CRC
-#define CHANNEL         11             ///< 11=2.405GHz
+#define CHANNEL         12             ///< 11=2.405GHz
 #define TIMER_PERIOD    (0xffff>>4)    ///< 0xffff = 2s@32kHz
 #define ID              0x99           ///< byte sent in the packets
 
@@ -69,6 +69,7 @@ typedef struct {
                 int8_t          rxpk_rssi;
                 uint8_t         rxpk_lqi;
                 bool            rxpk_crc;
+                uint8_t         pktCounter;     // 发送的数据包的编号
 } app_vars_t;
 
 app_vars_t app_vars;
@@ -82,115 +83,46 @@ void     cb_timer(void);
 void     cb_uart_tx_done(void);
 uint8_t  cb_uart_rx(void);
 
+void     initVars();
+void     initEnvironment();       // init board, uart, timer
+void     initRadio();
+
 //=========================== main ============================================
-
-/**
-\brief The program starts executing here.
-*/
 int mote_main(void) {
-    uint8_t i;
-
     uint8_t freq_offset;
     uint8_t sign;
     uint8_t read;
 
-    // clear local variables
-    memset(&app_vars,0,sizeof(app_vars_t));
-
-    // initialize board
-    board_init();
-
-    // setup UART
-    uart_setCallbacks(cb_uart_tx_done,cb_uart_rx);
-    uart_enableInterrupts();
-
-    app_vars.uartDone = 1;
-
-    // add callback functions radio
-    radio_setStartFrameCb(cb_startFrame);
-    radio_setEndFrameCb(cb_endFrame);
-
-    // prepare packet
-    app_vars.packet_len = sizeof(app_vars.packet);
-    for (i=0;i<app_vars.packet_len;i++) {
-        app_vars.packet[i] = ID;
-    }
-
-    // start bsp timer
-    sctimer_set_callback(cb_timer);
-    sctimer_setCompare(sctimer_readCounter()+TIMER_PERIOD);
-    sctimer_enable();
-
-    // prepare radio
-    radio_rfOn();
-    // freq type only effects on scum port
-    radio_setFrequency(CHANNEL, FREQ_RX);
-
-    // switch in RX by default
-    radio_rxEnable();
-    app_vars.state = APP_STATE_RX;
-
-    // start by a transmit
-    app_vars.flags |= APP_FLAG_TIMER;
+    initVars();
+    initEnvironment();
+    initRadio();
 
     while (1) {
-
-        // sleep while waiting for at least one of the flags to be set
-        while (app_vars.flags==0x00) {
+        while (app_vars.flags==0x00) {      // Sleep while no flags set
             board_sleep();
         }
 
-        // handle and clear every flag
-        while (app_vars.flags) {
-
-
-            //==== APP_FLAG_START_FRAME (TX or RX)
-
-            if (app_vars.flags & APP_FLAG_START_FRAME) {
-                // start of frame
-
-                switch (app_vars.state) {
-                    case APP_STATE_RX:
-                        // started receiving a packet
-
-                        // led
-                        leds_error_on();
+        while (app_vars.flags) {            // handle and clear every flag
+            if (app_vars.flags & APP_FLAG_START_FRAME) {      // APP_FLAG_START_FRAME: TX or RX
+                switch (app_vars.state) {                     // start of frame
+                    case APP_STATE_RX:          // start receiving a pkt
+                        leds_error_on();        // light up!
                         break;
-                    case APP_STATE_TX:
-                        // started sending a packet
-
-                        // led
+                    case APP_STATE_TX:          // start sending
                         leds_sync_on();
-                    break;
+                        break;
                 }
-
-                // clear flag
-                app_vars.flags &= ~APP_FLAG_START_FRAME;
+                app_vars.flags &= ~APP_FLAG_START_FRAME;      // clear THIS flag
             }
 
-            //==== APP_FLAG_END_FRAME (TX or RX)
-
-            if (app_vars.flags & APP_FLAG_END_FRAME) {
-                // end of frame
-
+            if (app_vars.flags & APP_FLAG_END_FRAME) {        // APP_FLAG_END_FRAME (TX or RX). means end of frame
                 switch (app_vars.state) {
-
-                    case APP_STATE_RX:
-
-                        // done receiving a packet
+                    case APP_STATE_RX:                        // receiving done
                         app_vars.packet_len = sizeof(app_vars.packet);
+                        radio_getReceivedFrame(app_vars.packet, &app_vars.packet_len, sizeof(app_vars.packet),  // get packet from radio
+                                               &app_vars.rxpk_rssi, &app_vars.rxpk_lqi, &app_vars.rxpk_crc);
 
-                        // get packet from radio
-                        radio_getReceivedFrame(
-                            app_vars.packet,
-                            &app_vars.packet_len,
-                            sizeof(app_vars.packet),
-                            &app_vars.rxpk_rssi,
-                            &app_vars.rxpk_lqi,
-                            &app_vars.rxpk_crc
-                        );
-
-                        freq_offset = radio_getFrequencyOffset();
+                        freq_offset = radio_getFrequencyOffset();     // WHAT? WHY? 
                         sign = (freq_offset & 0x80) >> 7;
                         if (sign){
                             read = 0xff - (uint8_t)(freq_offset) + 1;
@@ -198,7 +130,7 @@ int mote_main(void) {
                             read = freq_offset;
                         }
 
-                        i = 0;
+                        uint8_t i = 0;
                         if (sign) {
                             stringToSend[i++] = '-';
                         } else {
@@ -208,6 +140,10 @@ int mote_main(void) {
                         stringToSend[i++] = '0'+read/10;
                         stringToSend[i++] = '0'+read%10;
                         stringToSend[i++] = ' ';
+
+                        stringToSend[i++] = app_vars.rxpk_rssi;
+                        stringToSend[i++] = app_vars.rxpk_crc;
+                        stringToSend[i++] = sizeof(app_vars.packet);
 
                         stringToSend[i++] = 'P';
                         memcpy(&stringToSend[i],&app_vars.packet[0],14);
@@ -226,69 +162,58 @@ int mote_main(void) {
                             stringToSend[i++] = '+';
                         }
                         stringToSend[i++] = '0'+read/100;
-                        stringToSend[i++] = '0'+read/10;
+                        stringToSend[i++] = '0'+read/10;  
                         stringToSend[i++] = '0'+read%10;
 
                         stringToSend[sizeof(stringToSend)-2] = '\r';
                         stringToSend[sizeof(stringToSend)-1] = '\n';
 
-                        // send string over UART
-                        if (app_vars.uartDone == 1) {
+                        if (app_vars.uartDone == 1) {               // send string over UART
                             app_vars.uartDone              = 0;
                             app_vars.uart_lastTxByteIndex  = 0;
                             uart_writeByte(stringToSend[app_vars.uart_lastTxByteIndex]);
                         }
-
-                        // led
                         leds_error_off();
                         break;
-                    case APP_STATE_TX:
-                        // done sending a packet
-
-                        // switch to RX mode
-                        radio_rxEnable();
+                    case APP_STATE_TX:                       // pkt sent
+                        radio_rxEnable();                    // switch to RX mode
                         radio_rxNow();
                         app_vars.state = APP_STATE_RX;
-
-                        // led
                         leds_sync_off();
                         break;
                 }
-                // clear flag
-                app_vars.flags &= ~APP_FLAG_END_FRAME;
+                app_vars.flags &= ~APP_FLAG_END_FRAME;       // clear flag
             }
 
-            //==== APP_FLAG_TIMER
-
-            if (app_vars.flags & APP_FLAG_TIMER) {
-                // timer fired
-
+            if (app_vars.flags & APP_FLAG_TIMER) {           // APP_FLAG_TIMER. timer fired
                 if (app_vars.state==APP_STATE_RX) {
-                    // stop listening
-                    radio_rfOff();
+                    radio_rfOff();                           // stop listening
 
-                    // prepare packet
-                    app_vars.packet_len = sizeof(app_vars.packet);
-                    i = 0;
+                    app_vars.packet_len = sizeof(app_vars.packet);      // prepare packet
+                    uint8_t i = 0;
+                    app_vars.packet[i++] = 'J';
+                    app_vars.packet[i++] = 'W';
+                    app_vars.packet[i++] = 'L';
+                    app_vars.packet[i++] = '_';
                     app_vars.packet[i++] = 't';
                     app_vars.packet[i++] = 'e';
                     app_vars.packet[i++] = 's';
                     app_vars.packet[i++] = 't';
                     app_vars.packet[i++] = CHANNEL;
+                    app_vars.packet[i++] = app_vars.pktCounter;
+                    app_vars.pktCounter++;
                     while (i<app_vars.packet_len) {
                         app_vars.packet[i++] = ID;
                     }
 
-                    // start transmitting packet
-                    radio_loadPacket(app_vars.packet,LEN_PKT_TO_SEND);
+                    radio_loadPacket(app_vars.packet,LEN_PKT_TO_SEND);  // start transmitting packet
                     radio_txEnable();
                     radio_txNow();
 
                     app_vars.state = APP_STATE_TX;
                 }
 
-                // clear flag
-                app_vars.flags &= ~APP_FLAG_TIMER;
+                app_vars.flags &= ~APP_FLAG_TIMER;                      // clear flag
             }
         }
     }
@@ -297,11 +222,8 @@ int mote_main(void) {
 //=========================== callbacks =======================================
 
 void cb_startFrame(PORT_TIMER_WIDTH timestamp) {
-    // set flag
-    app_vars.flags |= APP_FLAG_START_FRAME;
-
-    // update debug stats
-    app_dbg.num_startFrame++;
+    app_vars.flags |= APP_FLAG_START_FRAME;             // set flag
+    app_dbg.num_startFrame++;                           // update debug stats
 
     if (app_vars.state == APP_STATE_RX) {
         app_dbg.num_rx_startFrame++;
@@ -309,10 +231,7 @@ void cb_startFrame(PORT_TIMER_WIDTH timestamp) {
 }
 
 void cb_endFrame(PORT_TIMER_WIDTH timestamp) {
-    // set flag
     app_vars.flags |= APP_FLAG_END_FRAME;
-
-    // update debug stats
     app_dbg.num_endFrame++;
 
     if (app_vars.state == APP_STATE_RX) {
@@ -321,10 +240,7 @@ void cb_endFrame(PORT_TIMER_WIDTH timestamp) {
 }
 
 void cb_timer(void) {
-    // set flag
     app_vars.flags |= APP_FLAG_TIMER;
-
-    // update debug stats
     app_dbg.num_timer++;
 
     sctimer_setCompare(sctimer_readCounter()+TIMER_PERIOD);
@@ -341,15 +257,41 @@ void cb_uart_tx_done(void) {
 
 uint8_t cb_uart_rx(void) {
     uint8_t byte;
-
-    // toggle LED
     leds_error_toggle();
-
-    // read received byte
-    byte = uart_readByte();
-
-    // echo that byte over serial
-    uart_writeByte(byte);
-
+    byte = uart_readByte();       // read received byte
+    uart_writeByte(byte);         // echo that byte over serial
     return 0;
+}
+
+void initVars() {
+    memset(&app_vars,0,sizeof(app_vars_t));           // clear local variables
+    app_vars.uartDone = 1;
+
+    app_vars.packet_len = sizeof(app_vars.packet);    // prepare packet. 127 Bytes
+    for (uint8_t i=0;i<app_vars.packet_len;i++) {
+        app_vars.packet[i] = ID;
+    }
+}
+
+void initEnvironment() {
+    board_init();
+    uart_setCallbacks(cb_uart_tx_done,cb_uart_rx);    // setup UART
+    uart_enableInterrupts();
+
+    sctimer_set_callback(cb_timer);                   // start bsp timer
+    sctimer_setCompare(sctimer_readCounter()+TIMER_PERIOD);
+    sctimer_enable();
+}
+
+void initRadio() {
+    radio_setStartFrameCb(cb_startFrame);             // add callback functions radio
+    radio_setEndFrameCb(cb_endFrame);
+
+    radio_rfOn();                                     // prepare radio
+    radio_setFrequency(CHANNEL, FREQ_RX);             // freq type only effects on scum port
+
+    radio_rxEnable();                                 // switch in RX by default
+    
+    app_vars.state = APP_STATE_RX;
+    app_vars.flags |= APP_FLAG_TIMER;                 // start by a transmit
 }

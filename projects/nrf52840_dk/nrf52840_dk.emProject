@@ -365,7 +365,9 @@
       exclude=""
       filter="*.c"
       path="01bsp_bmx160"
-      recurse="Yes" />
+      recurse="Yes">
+      <configuration Name="Debug" c_user_include_directories="" />
+    </folder>
     <folder
       Name="inc"
       exclude=""
@@ -384,6 +386,9 @@
       filter=""
       path="../../bsp/chips/bmx160"
       recurse="Yes" />
+    <configuration
+      Name="Debug"
+      c_user_include_directories="../../bsp/chips/bmp388" />
   </project>
   <project Name="01bsp_radio">
     <configuration

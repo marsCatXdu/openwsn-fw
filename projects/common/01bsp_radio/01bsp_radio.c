@@ -27,8 +27,8 @@ end of frame event), it will turn on its error LED.
 
 #define LENGTH_PACKET   125+LENGTH_CRC  ///< maximum length is 127 bytes
 #define LEN_PKT_TO_SEND 20+LENGTH_CRC
-#define CHANNEL         12             ///< 11=2.405GHz
-#define TIMER_PERIOD    (0xffff>>4)    ///< 0xffff = 2s@32kHz
+#define CHANNEL         1             ///< 11=2.405GHz
+#define TIMER_PERIOD    (0xffff>>6)    ///< 0xffff = 2s@32kHz
 #define ID              0x99           ///< byte sent in the packets
 
 uint8_t stringToSend[]  = "+002 Ptest.24.00.12.-010\n";

@@ -19,11 +19,12 @@ Then it sends out the gyro data through uart at interval of SAMPLE_PERIOD.
 #include "i2c.h"
 #include "uart.h"
 #include "bmx160.h"
+#include "bmp388.h"
 
 //=========================== defines =========================================
 
-#define SAMPLE_PERIOD   (32768>>4)  // @32kHz = 1s
-#define BUFFER_SIZE     0x08   //2B*3 axises value + 2B ending with '\r\n'
+#define SAMPLE_PERIOD   (32768>>5)  // @32kHz = 1s
+#define BUFFER_SIZE     0x10        // 16 bytes, 0-5 for bmx160, 6-14 for bmp388, 15-16 \\r\\n 
 
 //=========================== variables =======================================
 
@@ -54,26 +55,11 @@ void cb_compare(void);
 void cb_uartTxDone(void);
 uint8_t cb_uartRxCb(void);
 
-//=========================== main ============================================
+int16_t tmp;
+uint8_t i;
 
-/**
-\brief The program starts executing here.
-*/
-int mote_main(void) {
-
-    int16_t tmp;
-    uint8_t i;
-
-    // initialize board. 
-    board_init();
-
-    // setup UART
-    uart_setCallbacks(cb_uartTxDone,cb_uartRxCb);
-    uart_enableInterrupts();
-   
-    sctimer_set_callback(cb_compare);
-    sctimer_setCompare(sctimer_readCounter()+SAMPLE_PERIOD);
-         
+void initBmx160()
+{
     // alway set address first
     i2c_set_addr(BMX160_ADDR);
 
@@ -104,8 +90,70 @@ int mote_main(void) {
     // 0x2: +/-500°/s  = 131.2LSB/°/s
     // 0x3: +/-250°/s  = 262.4LSB/°/s
     bmx160_gyr_range(0x1);
-    // ToDo
-    //bmx160_mag_if();
+}
+
+void initBmp388()
+{
+    i2c_set_addr(BMP388_ADDR);
+    bmp388Init();
+}
+
+void fillBmx160Data()
+{
+    i2c_set_addr(BMX160_ADDR);
+
+    bmx160_read_9dof_data();
+
+    tmp = bmx160_read_gyr_x();
+    app_vars.uartToSend[i++] = (uint8_t)((tmp>>8) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((tmp>>0) & 0x00ff);
+    
+    tmp = bmx160_read_gyr_y();
+    app_vars.uartToSend[i++] = (uint8_t)((tmp>>8) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((tmp>>0) & 0x00ff);
+
+    tmp = bmx160_read_gyr_z();
+    app_vars.uartToSend[i++] = (uint8_t)((tmp>>8) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((tmp>>0) & 0x00ff);
+}
+
+void fillBmp388Data()
+{
+    i2c_set_addr(BMP388_ADDR);
+    float temp = bmp388ReadTemp();
+    uint32_t tempUint32Presentation;
+    memcpy(&tempUint32Presentation, &temp, 4);
+    app_vars.uartToSend[i++] = (uint8_t)((tempUint32Presentation>>24) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((tempUint32Presentation>>16) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((tempUint32Presentation>>8) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((tempUint32Presentation>>0) & 0x00ff);
+
+    uint32_t pressure = bmp388ReadPressure();
+    app_vars.uartToSend[i++] = (uint8_t)((pressure>>24) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((pressure>>16) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((pressure>>8) & 0x00ff);
+    app_vars.uartToSend[i++] = (uint8_t)((pressure>>0) & 0x00ff);
+}
+
+//=========================== main ============================================
+
+/**
+\brief The program starts executing here.
+*/
+int mote_main(void) {
+
+    // initialize board. 
+    board_init();
+
+    // setup UART
+    uart_setCallbacks(cb_uartTxDone,cb_uartRxCb);
+    uart_enableInterrupts();
+   
+    sctimer_set_callback(cb_compare);
+    sctimer_setCompare(sctimer_readCounter()+SAMPLE_PERIOD);
+
+    initBmx160();
+    initBmp388();
 
     while (1) {
 
@@ -113,20 +161,9 @@ int mote_main(void) {
         while (app_vars.uartSendNow==0);
         app_vars.uartSendNow = 0;
 
-        bmx160_read_9dof_data();
-
         i=0;
-        tmp = bmx160_read_gyr_x();
-        app_vars.uartToSend[i++] = (uint8_t)((tmp>>8) & 0x00ff);
-        app_vars.uartToSend[i++] = (uint8_t)((tmp>>0) & 0x00ff);
-        
-        tmp = bmx160_read_gyr_y();
-        app_vars.uartToSend[i++] = (uint8_t)((tmp>>8) & 0x00ff);
-        app_vars.uartToSend[i++] = (uint8_t)((tmp>>0) & 0x00ff);
-
-        tmp = bmx160_read_gyr_z();
-        app_vars.uartToSend[i++] = (uint8_t)((tmp>>8) & 0x00ff);
-        app_vars.uartToSend[i++] = (uint8_t)((tmp>>0) & 0x00ff);
+        fillBmx160Data();
+        fillBmp388Data();
 
         app_vars.uartToSend[i++] = '\r';
         app_vars.uartToSend[i++] = '\n';
